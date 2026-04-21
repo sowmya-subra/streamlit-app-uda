@@ -1,8 +1,8 @@
 """
 GuardRail — Streamlit App
-6 tabs total. Live: Tab 02 Heatmap, Tab 04 Politeness Paradox, Tab 05 Topic Explorer.
-Partial-live (parquet-backed fallback + auto-load hooks): Tab 01 Attack Surface, Tab 03 Super-Attack.
-Empty-state until risk model lands: Tab 06 Risk Scorer.
+6 tabs total. Live (parquet-only): Tab 02 Heatmap, Tab 04 Politeness Paradox, Tab 05 Topic Explorer.
+Partial-live (parquet-backed fallback + auto-load hooks for Stage-7/8 artifacts):
+    Tab 01 Attack Surface, Tab 03 Super-Attack, Tab 06 Risk Scorer.
 
 Run:  streamlit run app.py
 Deps: streamlit pandas numpy plotly pyarrow
@@ -143,7 +143,7 @@ MASTER_PATH = DATA_DIR / "master_with_nlp.parquet"
 def artifact_path(filename: str) -> Path:
     """Route an artifact filename to data/ or assets/ by extension.
     PNG and HTML render targets live under assets/; everything else (parquet,
-    csv, md, pkl) lives under data/.
+    csv, md) lives under data/.
     """
     return (ASSETS_DIR if filename.endswith((".png", ".html")) else DATA_DIR) / filename  
 
@@ -217,12 +217,6 @@ def load_model_comparison() -> pd.DataFrame | None:
 @st.cache_data(show_spinner=False)
 def load_politeness_stats() -> pd.DataFrame | None:
     p = artifact_path("stats_table.csv")
-    return pd.read_csv(p) if p.exists() else None
-
-
-@st.cache_data(show_spinner=False)
-def load_super_attack_data() -> pd.DataFrame | None:
-    p = artifact_path("super_attack_data.csv")
     return pd.read_csv(p) if p.exists() else None
 
 
@@ -394,7 +388,7 @@ with tabs[0]:
             f"""<div class="stub-banner">
             ⏳ <b>Awaiting network analysis (Stage 7):</b> {len(missing)} / {len(expected_files)} files pending:
             {", ".join(f"<code>{fn}</code>" for fn in missing)}.
-            Drop data files (<code>.csv</code>, <code>.md</code>, <code>.pkl</code>) into <code>data/</code> and images / HTML into <code>assets/</code>; this tab will light up automatically.
+            Drop data files (<code>.csv</code>, <code>.md</code>) into <code>data/</code> and images / HTML into <code>assets/</code>; this tab will light up automatically.
             </div>""",
             unsafe_allow_html=True,
         )
@@ -677,7 +671,6 @@ with tabs[2]:
     # ── Artifact status ────────────────────────────────────────────────────
     expected_files_t3 = {
         "super_attack_heatmap.png": "Pair-lift heatmap faceted by harm category",
-        "super_attack_data.csv": "Underlying pair-lift data for interactive view",
     }
     missing_t3 = [fn for fn in expected_files_t3 if not artifact_path(fn).exists()]
     if missing_t3:
@@ -689,7 +682,7 @@ with tabs[2]:
             unsafe_allow_html=True,
         )
 
-    # ── Harm-category selector (shared by live preview + hero) ─────────────
+    # ── Harm-category selector (drives the live leaderboard below) ─────────
     harm_options = [(c, CATEGORY_DISPLAY[c]) for c in HARM_CATEGORIES if c in df_scored.columns]
     display_to_col = {label: col for col, label in harm_options}
     selected_label = st.selectbox(
@@ -697,9 +690,10 @@ with tabs[2]:
         [label for _, label in harm_options],
         index=[label for _, label in harm_options].index("Hate") if any(l == "Hate" for _, l in harm_options) else 0,
         help=(
-            "Changes the focus for both the single-technique leaderboard below and the network-analysis "
-            "pair-lift heatmap (once loaded). Super-attacks are category-specific: the pair that "
-            "drives Hate isn't the same pair that drives Self-harm."
+            "Sets the harm category for the single-technique leaderboard below. "
+            "Super-attacks are category-specific: the pair that drives Hate isn't the same pair that "
+            "drives Self-harm. The static pair-lift PNG further down already facets by category, so "
+            "this selector doesn't affect it."
         ),
     )
     selected_col = display_to_col[selected_label]
@@ -762,68 +756,20 @@ with tabs[2]:
     # ── Hero: pair-lift heatmap (network analysis) ─────────────────────────
     st.markdown("#### Pair-lift heatmap (super-attacks)")
     super_png = artifact_path("super_attack_heatmap.png")
-    super_data = load_super_attack_data()
-    if super_data is not None:
+    if super_png.exists():
         st.markdown(
             "<div style='color:#334155;font-size:0.82rem;margin-bottom:0.4rem'>"
-            "Rows = T_i, columns = T_j. Each cell = lift (pair mean ÷ corpus mean) for the selected harm. "
-            "Bright cells (lift &gt; 1.5) are super-attacks: the pair amplifies this specific harm beyond "
-            "what either technique does alone."
+            "Rows = T_i, columns = T_j. Each cell = lift (pair mean ÷ corpus mean), faceted by harm category. "
+            "Bright cells (lift &gt; 1.5) are super-attacks: the pair amplifies that specific harm beyond "
+            "what either technique does alone. The harm-category selector above is for the single-technique "
+            "leaderboard; the network-analysis render below shows all categories at once."
             "</div>",
             unsafe_allow_html=True,
         )
-        # Expected columns: technique_i, technique_j, harm_category, lift, [n_pair]
-        # Filter by the selected category if the column exists
-        filtered = super_data.copy()
-        if "harm_category" in filtered.columns:
-            # Accept either raw harm column name or display label
-            filtered = filtered[
-                (filtered["harm_category"] == selected_col)
-                | (filtered["harm_category"] == selected_label)
-            ]
-        if filtered.empty:
-            st.info(f"`super_attack_data.csv` has no rows for **{selected_label}**. Check harm_category values.")
-        else:
-            # Pivot to T_i × T_j
-            if {"technique_i", "technique_j", "lift"}.issubset(filtered.columns):
-                pivot_lift = filtered.pivot_table(
-                    index="technique_i", columns="technique_j", values="lift", aggfunc="mean"
-                ).reindex(index=TECHNIQUES, columns=TECHNIQUES)
-                fig_pair = go.Figure(go.Heatmap(
-                    z=pivot_lift.values,
-                    x=pivot_lift.columns.tolist(),
-                    y=pivot_lift.index.tolist(),
-                    text=[[f"{v:.2f}" if pd.notna(v) else "" for v in row] for row in pivot_lift.values],
-                    texttemplate="%{text}",
-                    textfont=dict(size=9, family="IBM Plex Mono"),
-                    colorscale=[[0, "#f8fafc"], [0.5, "#fdba74"], [1, "#9a3412"]],
-                    zmin=0, zmax=max(np.nanmax(pivot_lift.values), 1.5),
-                    colorbar=dict(
-                        title=dict(text="Lift", font=dict(family="IBM Plex Mono", color="#334155")),
-                        tickfont=dict(family="IBM Plex Mono", color="#334155"),
-                    ),
-                    hovertemplate="<b>%{y} × %{x}</b><br>Lift: %{z:.2f}<extra></extra>",
-                ))
-                fig_pair.update_layout(
-                    paper_bgcolor="#ffffff", plot_bgcolor="#f8fafc",
-                    font=dict(color="#334155", family="IBM Plex Mono"),
-                    hoverlabel=dict(bgcolor="#ffffff", bordercolor="#e2e8f0",
-                                    font=dict(color="#0f172a", family="IBM Plex Sans", size=12)),
-                    xaxis=dict(tickfont=dict(size=11)),
-                    yaxis=dict(tickfont=dict(size=11)),
-                    height=520,
-                )
-                st.plotly_chart(fig_pair, width="stretch")
-            else:
-                st.warning(
-                    f"`super_attack_data.csv` columns: {list(filtered.columns)}. "
-                    "Expected `technique_i`, `technique_j`, `lift` (and optionally `harm_category`, `n_pair`)."
-                )
-    elif super_png.exists():
         st.image(str(super_png),
-                 caption="Super-attack heatmap, faceted by harm category (network analysis)")
+                 caption="Super-attack heatmap, faceted by harm category (Stage 7)")
     else:
-        st.info("Pair-lift heatmap will render here once `super_attack_data.csv` or `super_attack_heatmap.png` is available from the network analysis.")
+        st.info("Pair-lift heatmap will render here once `super_attack_heatmap.png` is available from the network analysis.")
 
     # ── Narrative (shared with Tab 01) ────────────────────────────────────
     if artifact_path("network_findings.md").exists():
@@ -1204,18 +1150,15 @@ with tabs[5]:
         "<i>delta</i> in performance, not the absolute score."
         "</div>"
         "<div style='color:#334155;font-size:0.85rem;margin-bottom:1rem'>"
-        "<b>What will live here when the risk model lands:</b> (1) a text-input scorer driven by "
-        "the trained Ridge / Logistic model, (2) the layered model-comparison chart "
-        "(text → +taxonomy → +network), (3) the per-category performance bars, "
-        "(4) feature importance, (5) the findings narrative."
+        "<b>What will live here when the risk model lands:</b> (1) the layered model-comparison chart "
+        "(text → +taxonomy → +network), (2) the per-category performance bars, "
+        "(3) feature importance, (4) the findings narrative."
         "</div>",
         unsafe_allow_html=True,
     )
 
     # ── Artifact status ────────────────────────────────────────────────────
     expected_files_t6 = {
-        "risk_model.pkl": "Trained Ridge / Logistic model",
-        "vectorizer.pkl": "Fitted TF-IDF vectorizer",
         "model_comparison_table.csv": "Layered metrics: text / +taxonomy / +network × harm category",
         "per_category_performance.png": "Per-harm-category model performance bars",
         "feature_importance.png": "Top-30 Ridge coefficients for the network-augmented model",
@@ -1227,7 +1170,7 @@ with tabs[5]:
             f"""<div class="stub-banner">
             ⏳ <b>Awaiting risk model (Stage 8):</b> {len(missing_t6)} / {len(expected_files_t6)} files pending:
             {", ".join(f"<code>{fn}</code>" for fn in missing_t6)}.
-            Drop data files (<code>.csv</code>, <code>.md</code>, <code>.pkl</code>) into <code>data/</code> and images / HTML into <code>assets/</code>; this tab will light up automatically.
+            Drop data files (<code>.csv</code>, <code>.md</code>) into <code>data/</code> and images / HTML into <code>assets/</code>; this tab will light up automatically.
             </div>""",
             unsafe_allow_html=True,
         )
@@ -1262,26 +1205,6 @@ with tabs[5]:
         if feat_png.exists():
             st.image(str(feat_png),
                      caption="Top Ridge coefficients from the network-augmented model")
-
-    # ── Interactive scorer (requires the risk model) ───────────────────────
-    st.markdown("#### Interactive scorer")
-    model_pkl = artifact_path("risk_model.pkl")
-    vec_pkl = artifact_path("vectorizer.pkl")
-    if model_pkl.exists() and vec_pkl.exists():
-        st.info(
-            "Model and vectorizer are present. Interactive scoring wiring will be enabled in the next pass, "
-            "we need to know the exact pickle contents (model type, feature order) to plug it in safely."
-        )
-        st.text_area(
-            "Enter a prompt to score",
-            placeholder="Once the scorer is wired, this will predict 11-category harm scores in real time.",
-            height=140,
-            disabled=True,
-        )
-    else:
-        st.info(
-            "Text-input scorer will appear here once `risk_model.pkl` and `vectorizer.pkl` are available from the risk model."
-        )
 
     # ── Narrative ──────────────────────────────────────────────────────────
     if artifact_path("prediction_findings.md").exists():
