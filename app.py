@@ -135,8 +135,9 @@ TECHNIQUE_LABELS = {
     "T12": "Direct/Unframed Request",
 }
 
-DATA_DIR = Path("data")
-ASSETS_DIR = Path("assets")
+APP_DIR = Path(__file__).parent
+DATA_DIR = APP_DIR / "data"
+ASSETS_DIR = APP_DIR / "assets"
 MASTER_PATH = DATA_DIR / "master_with_nlp.parquet"
 
 
