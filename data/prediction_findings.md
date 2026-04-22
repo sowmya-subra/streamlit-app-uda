@@ -19,9 +19,9 @@ Adding network features added another **-0.00** on top.
 
 - **Network adds signal:** +-0.002 AUC — hub techniques in the co-occurrence graph are more harmful.
 
-- **Most predictable:** `harm_violence_graphic` (AUC=0.9529)
+- **Most predictable:** `harm_self_harm_instructions` (AUC=0.9475)
 
-- **Hardest category:** `harm_hate` (AUC=0.7566) — too few high-score examples.
+- **Hardest category:** `harm_harassment_threatening` (AUC=0.5981) — too few high-score examples.
 
 ## Honest Framing
 
