@@ -374,7 +374,6 @@ with tabs[0]:
 
     # ── Network-analysis artifact status ─────────────────────────────────────
     expected_files = {
-        "cooccurrence_graph.html": "Interactive pyvis network (hero view)",
         "network_metrics.csv": "PageRank, betweenness, community, harm-weighted PageRank",
         "playbook_communities.png": "Louvain community visualization",
         "cooccurrence_graph.png": "Static force-directed network",
@@ -448,27 +447,24 @@ with tabs[0]:
     )
     st.plotly_chart(fig_base, width="stretch")
 
-    # ── Hero: interactive network (network analysis) ────────────────────────
+    # ── Hero: co-occurrence network (network analysis) ──────────────────────
     st.markdown("#### Co-occurrence network")
-    graph_html = artifact_path("cooccurrence_graph.html")
     graph_png = artifact_path("cooccurrence_graph.png")
     community_png = artifact_path("playbook_communities.png")
-    if graph_html.exists():
+    if community_png.exists() or graph_png.exists():
         st.markdown(
             "<div style='color:#334155;font-size:0.82rem;margin-bottom:0.4rem'>"
-            "Interactive pyvis render of the technique graph. Node size = PageRank; colour = Louvain community. "
-            "Drag nodes to rearrange; hover for technique details."
+            "Force-directed render of the technique graph. Node size = PageRank; "
+            "colour = Louvain community (playbook grouping)."
             "</div>",
             unsafe_allow_html=True,
         )
-        st.components.v1.html(graph_html.read_text(), height=640, scrolling=True)
-    elif community_png.exists() or graph_png.exists():
         if community_png.exists():
             st.image(str(community_png), caption="Technique network coloured by Louvain community")
         if graph_png.exists():
             st.image(str(graph_png), caption="Technique co-occurrence network")
     else:
-        st.info("Interactive network will render here once `cooccurrence_graph.html` is available from the network analysis.")
+        st.info("Network visualisation will render here once `cooccurrence_graph.png` / `playbook_communities.png` are available from the network analysis.")
 
     # ── Centrality table (network analysis) ────────────────────────────────
     st.markdown("#### Centrality metrics")
